@@ -61,31 +61,33 @@ def save_params(param_dir, hparam_suffix, after_train_features, after_test_featu
     np.save(param_dir+"/test_outputs_{}.npy".format(hparam_suffix), test_outputs)
 
 
-def train(D, R, lambda_, disc_criterion, tensor_disc_labels, X_train, y_train):
-    # discriminator optimization
-    discriminator.train()
-    detached_weight = role_model.embed.weight.detach()
-    disc_outputs = discriminator(detached_weight)
+def train(D, D_criterion, D_labels, D_optimizer, R, R_criterion, y_train, R_optimizer, lambda_, X_train):
+    # Discriminator optimization
+    D.train()
+    detached_weight = R.embed.weight.detach()
+    D_outputs = D(detached_weight)
 
-    disc_loss = lambda_ * disc_criterion(disc_outputs, tensor_disc_labels)
+    D_loss = lambda_ * D_criterion(D_outputs, D_labels)
 
-    disc_optimizer.zero_grad()
-    disc_loss.backward(retain_graph=True)
-    disc_optimizer.step()
+    D_optimizer.zero_grad()
+    D_loss.backward(retain_graph=True)
+    D_optimizer.step()
 
-    # role-model optimization
-    role_model.train()
-    task_outputs = role_model(X_train)
+    # Role-model optimization
+    R.train()
+    R_outputs = R(X_train)
 
-    move_weight = role_model.embed.weight
-    disc_outputs = discriminator(move_weight)
+    move_weight = R.embed.weight
+    D_outputs = D(move_weight)
 
-    task_loss = task_criterion(task_outputs, y_train.long()) \
-                - lambda_ * disc_criterion(disc_outputs, tensor_disc_labels)
+    R_loss = R_criterion(R_outputs, y_train.long()) \
+                - lambda_ * D_criterion(D_outputs, D_labels)
 
-    task_optimizer.zero_grad()
-    task_loss.backward()
-    task_optimizer.step()
+    R_optimizer.zero_grad()
+    R_loss.backward()
+    R_optimizer.step()
+
+    return R_outputs, D_outputs
 
 
 def main():
@@ -95,7 +97,7 @@ def main():
     train_features = np.load("dump/train_features.npy")
     test_features = np.load("dump/test_features.npy")
     train_labels = np.load("dump/train_labels.npy")
-    disc_data = np.load("dump/disc_data.npy")
+    D_data = np.load("dump/disc_data.npy")
     if args.is_test_label:
         test_labels = np.load("dump/test_labels.npy")
     if args.is_val_label:
@@ -107,7 +109,7 @@ def main():
     tensor_test_features = torch.tensor(test_features, requires_grad=True).to(device)
     tensor_train_features = torch.tensor(train_features, requires_grad=True).to(device)
     y_train = torch.tensor(train_labels, requires_grad=False).to(device)
-    tensor_disc_labels = torch.tensor(disc_data, requires_grad=False).to(device)
+    tensor_D_labels = torch.tensor(D_data, requires_grad=False).to(device)
     if args.is_test_label:
         y_test = torch.tensor(test_labels,  requires_grad=False).to(device)
     if args.is_val_label:
@@ -120,25 +122,25 @@ def main():
     X_train = X[test_features.shape[0]:].to(device)
     X_test = X[:test_features.shape[0]].to(device)
 
-    role_model = RoleModel(init_features=merge_features, dr_rate=args.dr_rate, class_num=len(y_train.unique())).to(device)
-    discriminator = Discriminator(args.dr_rate, emb_size=merge_features.shape[1]).to(device)
+    R = RoleModel(init_features=merge_features, dr_rate=args.dr_rate, class_num=len(y_train.unique())).to(device)
+    D = Discriminator(args.dr_rate, emb_size=merge_features.shape[1]).to(device)
 
     # loss and optimizer
-    disc_criterion = nn.BCELoss()
-    disc_optimizer = torch.optim.Adam(discriminator.parameters(), lr=args.disc_lr,  weight_decay=args.wd)
+    D_criterion = nn.BCELoss()
+    D_optimizer = torch.optim.Adam(D.parameters(), lr=args.disc_lr,  weight_decay=args.wd)
 
-    task_criterion = nn.CrossEntropyLoss() 
-    task_optimizer = torch.optim.Adam(role_model.parameters(), lr=args.task_lr, weight_decay=args.wd)
+    R_criterion = nn.CrossEntropyLoss() 
+    R_optimizer = torch.optim.Adam(R.parameters(), lr=args.task_lr, weight_decay=args.wd)
 
     for e in range(args.epoch):
         # discriminator optimization
-        train(discriminator, role_model, args.lambda_, disc_criterion, tensor_disc_labels, X_train, y_train)
+        R_outputs, D_outputs = train(D, D_criterion, tensor_D_labels, D_optimizer, R, R_criterion, y_train, R_optimizer, args.lambda_, X_train)
 
-        role_model.eval()
-        test_outputs = role_model(X_test)
-        train_accuracy = get_accuracy(task_outputs, y_train)
-        train_micro_f1, train_macro_f1 = get_f1(task_outputs, y_train)
-        disc_accuracy = accuracy(disc_outputs, tensor_disc_labels)
+        R.eval()
+        test_outputs = R(X_test)
+        train_accuracy = get_accuracy(R_outputs, y_train)
+        train_micro_f1, train_macro_f1 = get_f1(R_outputs, y_train)
+        disc_accuracy = accuracy(D_outputs, tensor_D_labels)
         if args.is_val_label:
             val_outputs = test_outputs[:val_labels.shape[0]]
             test_outputs = test_outputs[val_labels.shape[0]:]
@@ -156,8 +158,8 @@ def main():
         _logger.info("val accuracy: {}".format(val_accuracy))
 
     if args.param_dir is not None:
-        after_test_features = role_model.embed.weight.detach()[:test_features.shape[0], :].cpu().numpy()
-        after_train_features = role_model.embed.weight.detach()[test_features.shape[0]:, :].cpu().numpy()
+        after_test_features = R.embed.weight.detach()[:test_features.shape[0], :].cpu().numpy()
+        after_train_features = R.embed.weight.detach()[test_features.shape[0]:, :].cpu().numpy()
         test_outputs = test_outputs.detach().cpu().numpy()
         save_params(args.param_dir, hparam_suffix, after_train_features, after_test_features, test_outputs)
 
