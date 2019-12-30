@@ -22,8 +22,8 @@ device = torch.device("cuda: 0" if torch.cuda.is_available() else "cpu")
 
 def set_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--is_test_label", action="store_true", \
-                        help="True if test labels are available for calculating test accuracy")
+    parser.add_argument("--is_target_label", action="store_true", \
+                        help="True if target labels are available for calculating target accuracy")
 
     parser.add_argument("--is_val_label", action="store_true", \
                         help="True if validation labels are available for calculating validation accuracy")
@@ -53,15 +53,15 @@ def set_parser():
     return args
 
 
-def save_params(param_dir, hparam_suffix, after_train_features, after_test_features, test_outputs):
+def save_params(param_dir, hparam_suffix, after_source_X, after_target_X, target_outputs):
     if not os.path.exists(param_dir):
         os.mkdir(param_dir)
-    np.save(param_dir+"/train_feature_{}.npy".format(hparam_suffix), after_train_features)
-    np.save(param_dir+"/test_feature_{}.npy".format(hparam_suffix), after_test_features)
-    np.save(param_dir+"/test_outputs_{}.npy".format(hparam_suffix), test_outputs)
+    np.save(param_dir+"/source_feature_{}.npy".format(hparam_suffix), after_source_X)
+    np.save(param_dir+"/target_feature_{}.npy".format(hparam_suffix), after_target_X)
+    np.save(param_dir+"/target_outputs_{}.npy".format(hparam_suffix), target_outputs)
 
 
-def train(D, D_criterion, D_labels, D_optimizer, R, R_criterion, y_train, R_optimizer, lambda_, X_train):
+def train(D, D_criterion, D_labels, D_optimizer, R, R_criterion, y_source, R_optimizer, lambda_, X_source):
     # Discriminator optimization
     D.train()
     detached_weight = R.embed.weight.detach()
@@ -75,12 +75,12 @@ def train(D, D_criterion, D_labels, D_optimizer, R, R_criterion, y_train, R_opti
 
     # Role-model optimization
     R.train()
-    R_outputs = R(X_train)
+    R_outputs = R(X_source)
 
     move_weight = R.embed.weight
     D_outputs = D(move_weight)
 
-    R_loss = R_criterion(R_outputs, y_train.long()) \
+    R_loss = R_criterion(R_outputs, y_source.long()) \
                 - lambda_ * D_criterion(D_outputs, D_labels)
 
     R_optimizer.zero_grad()
@@ -94,36 +94,39 @@ def main():
     args = set_parser()
 
     # Read translated files
-    train_features = np.load("dump/train_features.npy")
-    test_features = np.load("dump/test_features.npy")
-    train_labels = np.load("dump/train_labels.npy")
+    source_X = np.load("dump/source_features.npy")
+    target_X = np.load("dump/target_features.npy")
+    source_labels = np.load("dump/source_labels.npy")
     D_data = np.load("dump/disc_data.npy")
-    if args.is_test_label:
-        test_labels = np.load("dump/test_labels.npy")
+    if args.is_target_label:
+        target_labels = np.load("dump/target_labels.npy")
     if args.is_val_label:
         val_labels = np.load("dump/val_labels.npy")
+        val_size = val_labels.shape[0]
+
+    target_size = target_X.shape[0]
 
     hparam_suffix = "e{}_dr{}_wd_{}_tlr{}_dlr{}_lamda{}".format(\
         args.epoch, args.dr_rate, args.wd, args.task_lr, args.disc_lr, args.lambda_)
 
-    tensor_test_features = torch.tensor(test_features, requires_grad=True).to(device)
-    tensor_train_features = torch.tensor(train_features, requires_grad=True).to(device)
-    y_train = torch.tensor(train_labels, requires_grad=False).to(device)
+    tensor_target_X = torch.tensor(target_X, requires_grad=True).to(device)
+    tensor_source_X = torch.tensor(source_X, requires_grad=True).to(device)
+    y_source = torch.tensor(source_labels, requires_grad=False).to(device)
     tensor_D_labels = torch.tensor(D_data, requires_grad=False).to(device)
-    if args.is_test_label:
-        y_test = torch.tensor(test_labels,  requires_grad=False).to(device)
+    if args.is_target_label:
+        y_target = torch.tensor(target_labels,  requires_grad=False).to(device)
     if args.is_val_label:
         y_val = torch.tensor(val_labels,  requires_grad=False).to(device)
 
-    merge_features = np.concatenate([test_features, train_features], axis=0)
+    merge_X = np.concatenate([target_X, source_X], axis=0)
 
     # input of models
-    X = torch.arange(train_features.shape[0] + test_features.shape[0])
-    X_train = X[test_features.shape[0]:].to(device)
-    X_test = X[:test_features.shape[0]].to(device)
+    X = torch.arange(source_X.shape[0] + target_size)
+    X_source = X[target_size:].to(device)
+    X_target = X[:target_size].to(device)
 
-    R = RoleModel(init_features=merge_features, dr_rate=args.dr_rate, class_num=len(y_train.unique())).to(device)
-    D = Discriminator(args.dr_rate, emb_size=merge_features.shape[1]).to(device)
+    R = RoleModel(init_features=merge_X, dr_rate=args.dr_rate, class_num=len(y_source.unique())).to(device)
+    D = Discriminator(args.dr_rate, emb_size=merge_X.shape[1]).to(device)
 
     # loss and optimizer
     D_criterion = nn.BCELoss()
@@ -134,35 +137,38 @@ def main():
 
     for e in range(args.epoch):
         # discriminator optimization
-        R_outputs, D_outputs = train(D, D_criterion, tensor_D_labels, D_optimizer, R, R_criterion, y_train, R_optimizer, args.lambda_, X_train)
+        R_outputs, D_outputs = train(D, D_criterion, tensor_D_labels, D_optimizer, R, R_criterion, y_source, R_optimizer, args.lambda_, X_source)
 
         R.eval()
-        test_outputs = R(X_test)
-        train_accuracy = get_accuracy(R_outputs, y_train)
-        train_micro_f1, train_macro_f1 = get_f1(R_outputs, y_train)
+        target_outputs = R(X_target)
+        source_accuracy = get_accuracy(R_outputs, y_source)
+
         disc_accuracy = accuracy(D_outputs, tensor_D_labels)
+
         if args.is_val_label:
-            val_outputs = test_outputs[:val_labels.shape[0]]
-            test_outputs = test_outputs[val_labels.shape[0]:]
+            val_outputs = target_outputs[:val_size]
+            target_outputs = target_outputs[val_size:]
             val_accuracy = get_accuracy(val_outputs, y_val)
-            val_micro_f1, val_macro_f1 = get_f1(val_outputs, y_val)
-        if args.is_test_label:
-            test_accuracy = get_accuracy(test_outputs, y_test)
-            test_micro_f1, test_macro_f1 = get_f1(test_outputs, y_test)
+        if args.is_target_label:
+            target_accuracy = get_accuracy(target_outputs, y_target)
 
     _logger.info(hparam_suffix)
-    _logger.info("train_accuracy: {}".format(train_accuracy))
-    if args.is_test_label:
-        _logger.info("test_accuracy: {}".format(test_accuracy))
+    _logger.info("source_accuracy: {}".format(source_accuracy))
+    if args.is_target_label:
+        _logger.info("target_accuracy: {}".format(target_accuracy))
     if args.is_val_label:
         _logger.info("val accuracy: {}".format(val_accuracy))
 
     if args.param_dir is not None:
-        after_test_features = R.embed.weight.detach()[:test_features.shape[0], :].cpu().numpy()
-        after_train_features = R.embed.weight.detach()[test_features.shape[0]:, :].cpu().numpy()
-        test_outputs = test_outputs.detach().cpu().numpy()
-        save_params(args.param_dir, hparam_suffix, after_train_features, after_test_features, test_outputs)
-
+        after_target_X = R.embed.weight.detach()[:target_size, :].cpu().numpy()
+        after_source_X = R.embed.weight.detach()[target_size:, :].cpu().numpy()
+        target_outputs = target_outputs.detach().cpu().numpy()
+        save_params(args.param_dir, hparam_suffix, after_source_X, after_target_X, target_outputs)
+    
+    after_target_X = R.embed.weight.detach()[:target_size, :].cpu().numpy()
+    after_source_X = R.embed.weight.detach()[target_size:, :].cpu().numpy()
+    print(source_X[0][0], target_X[0][0])
+    print(after_source_X[0][0], after_target_X[0][0])
 
 if __name__ == '__main__':
     main()
