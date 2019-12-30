@@ -26,7 +26,7 @@ First, you should put the edgelist to the `graph` directory.
 Go under `struc2vec` directory, and execute the following command to embed nodes into k-dimensional spaces:
 
 ```
-python src/main.py --input graph/karate-mirrored-edges.edgelist --num-walks 20 --walk-length 80 --window-size 5 --dimensions 128 --OPT1 True --OPT2 True --OPT3 True --until-layer 6
+python src/main.py --input graph/10_5_double_barbell.edgelist --num-walks 20 --walk-length 80 --window-size 5 --dimensions 128 --OPT1 True --OPT2 True --OPT3 True --until-layer 6
 ```
 
 where each arguments are compatible to the paper.   
