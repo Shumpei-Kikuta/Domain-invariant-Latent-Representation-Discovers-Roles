@@ -37,6 +37,14 @@ def set_parser():
     return args
 
 
+def save_params():
+    if not os.path.exists(args.param_dir):
+        os.mkdir(args.param_dir)
+    np.save(args.param_dir+"/train_feature_{}.npy".format(hparam_suffix), after_train_features)
+    np.save(args.param_dir+"/test_feature_{}.npy".format(hparam_suffix), after_test_features)
+    np.save(args.param_dir+"/test_outputs_{}.npy".format(hparam_suffix), test_outputs)
+
+
 args = set_parser()
 epoch = args.epoch
 dr_rate = args.dr_rate
@@ -45,17 +53,15 @@ weight_decay = args.wd
 task_lr = args.task_lr
 disc_lr = args.disc_lr
 
-
-# 前処理したファイルの読み込み
+# Read translated files
 train_features = np.load("dump/train_features.npy")
 test_features = np.load("dump/test_features.npy")
 train_labels = np.load("dump/train_labels.npy")
-disc_data = np.load("dump/disc_data.npy")  # 0: train, 1: test
+disc_data = np.load("dump/disc_data.npy")
 if args.is_test_label:
     test_labels = np.load("dump/test_labels.npy")
 if args.is_val_label:
     val_labels = np.load("dump/val_labels.npy")
-
 
 hparam_suffix = "e{}_dr{}_wd_{}_tlr{}_dlr{}_lamda{}".format(epoch, dr_rate, weight_decay, task_lr, disc_lr, lambda_)
 
@@ -86,7 +92,6 @@ task_criterion = nn.CrossEntropyLoss()
 task_optimizer = torch.optim.Adam(task_model.parameters(), lr=task_lr, weight_decay=weight_decay)
 
 for e in range(epoch):
-
     # discriminator optimization
     discriminator.train()
     
@@ -133,13 +138,9 @@ if args.is_test_label:
 if args.is_val_label:
     _logger.info("val accuracy: {}".format(val_accuracy))
 
-after_test_features = task_model.embed.weight.detach()[:test_features.shape[0], :].cpu().numpy()
-after_train_features = task_model.embed.weight.detach()[test_features.shape[0]:, :].cpu().numpy()
-test_outputs = test_outputs.detach().cpu().numpy()
 
 if args.param_dir is not None:
-    if not os.path.exists(args.param_dir):
-        os.mkdir(args.param_dir)
-    np.save(args.param_dir+"/train_feature_{}.npy".format(hparam_suffix), after_train_features)
-    np.save(args.param_dir+"/test_feature_{}.npy".format(hparam_suffix), after_test_features)
-    np.save(args.param_dir+"/test_outputs_{}.npy".format(hparam_suffix), test_outputs)
+    after_test_features = task_model.embed.weight.detach()[:test_features.shape[0], :].cpu().numpy()
+    after_train_features = task_model.embed.weight.detach()[test_features.shape[0]:, :].cpu().numpy()
+    test_outputs = test_outputs.detach().cpu().numpy()
+    save_params(args.param_dir, hparam_suffix, after_train_features, after_test_features, test_outputs)
