@@ -2,145 +2,165 @@
 import torch
 import torch.nn as nn
 import numpy as np
-import matplotlib.pyplot as plt
-import pandas as pd
-from sklearn.manifold import TSNE
 import os
-from model import TaskModel, Discriminator
-from translator import exec_translate
+from model import RoleModel, Discriminator
 from util import *
 import argparse
 import logging
-import shutil
-import torch.nn.functional as F
 
 
 _logger = logging.getLogger(__name__)
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s\t%(levelname)s\t%(name)s\t%(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s\t%(levelname)s\t%(name)s\t%(message)s")
 device = torch.device("cuda: 0" if torch.cuda.is_available() else "cpu")
 
 
 def set_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--is_test_label", action="store_true", help="True if test labels are available for calculating test accuracy")
-    parser.add_argument("--is_val_label", action="store_true", help="True if validation labels are available for calculating validation accuracy")
-    parser.add_argument("--param_dir", default=None, help="preserve features and predicted labels")
-    parser.add_argument("--epoch", default=3000, type=int, help="How many times models iterate")
-    parser.add_argument("--dr_rate", default=0.5, type=float, help="Drop out rate should be set from 0 to 1")
-    parser.add_argument("--lambda_", default=10, type=float, help="Balance coefficient")
-    parser.add_argument("--wd", default=1e-4, type=float, help="weight decay rate")
-    parser.add_argument("--task_lr", default=1e-4, type=float, help="learning rate for Role-Model")
-    parser.add_argument("--disc_lr", default=1e-4, type=float, help="learning rate for Discriminator")
+    parser.add_argument("--is_target_label", action="store_true",
+                        help="True if target labels are available for calculating target accuracy")
+
+    parser.add_argument("--is_val_label", action="store_true",
+                        help="True if validation labels are available for calculating validation accuracy")
+
+    parser.add_argument("--param_dir", default=None,
+                        help="preserve features and predicted labels")
+
+    parser.add_argument("--epoch", default=3000, type=int,
+                        help="How many times models iterate")
+
+    parser.add_argument("--dr_rate", default=0.5, type=float,
+                        help="Drop out rate should be set from 0 to 1")
+
+    parser.add_argument("--lambda_", default=10, type=float,
+                        help="Balance coefficient")
+
+    parser.add_argument("--wd", default=1e-4, type=float,
+                        help="weight decay rate")
+
+    parser.add_argument("--r_lr", default=1e-4, type=float,
+                        help="learning rate for Role-Model")
+
+    parser.add_argument("--d_lr", default=1e-4, type=float,
+                        help="learning rate for Discriminator")
+
+    parser.add_argument("--suffix", default="adv", type=str, 
+                        help="Suffix for this implementation, used for saving params, logging")
+
     args = parser.parse_args()
     return args
 
 
-def save_params():
-    if not os.path.exists(args.param_dir):
-        os.mkdir(args.param_dir)
-    np.save(args.param_dir+"/train_feature_{}.npy".format(hparam_suffix), after_train_features)
-    np.save(args.param_dir+"/test_feature_{}.npy".format(hparam_suffix), after_test_features)
-    np.save(args.param_dir+"/test_outputs_{}.npy".format(hparam_suffix), test_outputs)
+def save_params(param_dir, suffix, after_source_X, after_target_X, target_outputs):
+    if not os.path.exists(param_dir):
+        os.mkdir(param_dir)
+    np.save(param_dir+"/source_feature_{}.npy".format(suffix), after_source_X)
+    np.save(param_dir+"/target_feature_{}.npy".format(suffix), after_target_X)
+    np.save(param_dir+"/target_outputs_{}.npy".format(suffix), target_outputs)
 
 
-args = set_parser()
-epoch = args.epoch
-dr_rate = args.dr_rate
-lambda_ = args.lambda_
-weight_decay = args.wd
-task_lr = args.task_lr
-disc_lr = args.disc_lr
+def train(D, D_criterion, D_labels, D_optimizer, R, R_criterion, y_source, R_optimizer, lambda_, X_source):
+    # Discriminator optimization
+    D.train()
+    detached_weight = R.embed.weight.detach()
+    D_outputs = D(detached_weight)
 
-# Read translated files
-train_features = np.load("dump/train_features.npy")
-test_features = np.load("dump/test_features.npy")
-train_labels = np.load("dump/train_labels.npy")
-disc_data = np.load("dump/disc_data.npy")
-if args.is_test_label:
-    test_labels = np.load("dump/test_labels.npy")
-if args.is_val_label:
-    val_labels = np.load("dump/val_labels.npy")
+    D_loss = lambda_ * D_criterion(D_outputs, D_labels)
 
-hparam_suffix = "e{}_dr{}_wd_{}_tlr{}_dlr{}_lamda{}".format(epoch, dr_rate, weight_decay, task_lr, disc_lr, lambda_)
+    D_optimizer.zero_grad()
+    D_loss.backward(retain_graph=True)
+    D_optimizer.step()
 
-tensor_test_features = torch.tensor(test_features, requires_grad=True).to(device)
-tensor_train_features = torch.tensor(train_features, requires_grad=True).to(device)
-y_train = torch.tensor(train_labels, requires_grad=False).to(device)
-tensor_disc_labels = torch.tensor(disc_data, requires_grad=False).to(device)
-if args.is_test_label:
-    y_test = torch.tensor(test_labels,  requires_grad=False).to(device)
-if args.is_val_label:
-    y_val = torch.tensor(val_labels,  requires_grad=False).to(device)
+    # Role-model optimization
+    R.train()
+    R_outputs = R(X_source)
 
-merge_features = np.concatenate([test_features, train_features], axis=0)
+    move_weight = R.embed.weight
+    D_outputs = D(move_weight)
 
-# # モデルの入力
-X = torch.arange(train_features.shape[0] + test_features.shape[0])
-X_train = X[test_features.shape[0]:].to(device)
-X_test = X[:test_features.shape[0]].to(device)
+    R_loss = R_criterion(R_outputs, y_source.long()) \
+                - lambda_ * D_criterion(D_outputs, D_labels)
 
-task_model = TaskModel(init_features=merge_features, dr_rate=dr_rate, class_label_num=len(y_train.unique())).to(device)
-discriminator = Discriminator(dr_rate, EMB_SIZE=merge_features.shape[1]).to(device)
+    R_optimizer.zero_grad()
+    R_loss.backward()
+    R_optimizer.step()
 
-# loss and optimizer
-disc_criterion = nn.BCELoss()
-disc_optimizer = torch.optim.Adam(discriminator.parameters(), lr=disc_lr,  weight_decay=weight_decay)
+    return R_outputs, D_outputs
 
-task_criterion = nn.CrossEntropyLoss() 
-task_optimizer = torch.optim.Adam(task_model.parameters(), lr=task_lr, weight_decay=weight_decay)
 
-for e in range(epoch):
-    # discriminator optimization
-    discriminator.train()
-    
-    detached_weight = task_model.embed.weight.detach()
-    disc_outputs = discriminator(detached_weight)
-    
-    disc_loss = lambda_ * disc_criterion(disc_outputs, tensor_disc_labels)
-    
-    disc_optimizer.zero_grad()
-    disc_loss.backward(retain_graph=True)
-    disc_optimizer.step()
-    
-    # task optimization
-    task_model.train()
-    task_outputs = task_model(X_train)
+def main():
+    args = set_parser()
 
-    move_weight = task_model.embed.weight
-    disc_outputs = discriminator(move_weight)
+    # Read latent representations
+    source_X = np.load("dump/source_features.npy")
+    target_X = np.load("dump/target_features.npy")
+    merge_X = np.concatenate([target_X, source_X], axis=0)
 
-    task_loss = task_criterion(task_outputs, y_train.long()) -  lambda_ * disc_criterion(disc_outputs, tensor_disc_labels)
-    
-    task_optimizer.zero_grad()
-    task_loss.backward()
-    task_optimizer.step()
-
-    task_model.eval()
-    test_outputs = task_model(X_test)
-    train_accuracy = get_accuracy(task_outputs, y_train)
-    train_micro_f1, train_macro_f1 = get_f1(task_outputs, y_train)
-    disc_accuracy = accuracy(disc_outputs, tensor_disc_labels)
+    # Read labels
+    source_labels = np.load("dump/source_labels.npy")
+    y_source = torch.tensor(source_labels, requires_grad=False).to(device)
+    if args.is_target_label:
+        target_labels = np.load("dump/target_labels.npy")
+        y_target = torch.tensor(target_labels, requires_grad=False).to(device)
     if args.is_val_label:
-        val_outputs = test_outputs[:val_labels.shape[0]]
-        test_outputs = test_outputs[val_labels.shape[0]:]
-        val_accuracy = get_accuracy(val_outputs, y_val)
-        val_micro_f1, val_macro_f1 = get_f1(val_outputs, y_val)
-    if args.is_test_label:
-        test_accuracy = get_accuracy(test_outputs, y_test)
-        test_micro_f1, test_macro_f1 = get_f1(test_outputs, y_test)
+        val_labels = np.load("dump/val_labels.npy")
+        y_val = torch.tensor(val_labels, requires_grad=False).to(device)
+        val_size = val_labels.shape[0]
 
-_logger.info(hparam_suffix)
-_logger.info("train_accuracy: {}".format(train_accuracy))
-if args.is_test_label:
-    _logger.info("test_accuracy: {}".format(test_accuracy))
-if args.is_val_label:
-    _logger.info("val accuracy: {}".format(val_accuracy))
+    # Read source or target label
+    D_labels = np.load("dump/disc_data.npy")
+    D_labels = torch.tensor(D_labels, requires_grad=False).to(device)
+
+    target_size = target_X.shape[0]
+
+    # input of models
+    X = torch.arange(merge_X.shape[0])
+    X_source = X[target_size:].to(device)
+    X_target = X[:target_size].to(device)
+    
+    # model definition
+    R = RoleModel(init_features=merge_X, dr_rate=args.dr_rate, class_num=len(y_source.unique())).to(device)
+    D = Discriminator(args.dr_rate, emb_size=merge_X.shape[1]).to(device)
+
+    # loss and optimizer
+    D_criterion = nn.BCELoss()
+    D_optimizer = torch.optim.Adam(D.parameters(), lr=args.d_lr,  weight_decay=args.wd)
+
+    R_criterion = nn.CrossEntropyLoss()
+    R_optimizer = torch.optim.Adam(R.parameters(), lr=args.r_lr, weight_decay=args.wd)
+
+    for e in range(args.epoch):
+        # train epoch
+        R_outputs, D_outputs = train(D, D_criterion, D_labels, D_optimizer, R, R_criterion, y_source, R_optimizer, args.lambda_, X_source)
+
+        # validation epoch
+        R.eval()
+        target_outputs = R(X_target)
+        source_accuracy = get_accuracy(R_outputs, y_source)
+        disc_accuracy = accuracy(D_outputs, D_labels)
+
+        if args.is_val_label:
+            val_outputs = target_outputs[:val_size]
+            target_outputs = target_outputs[val_size:]
+            val_accuracy = get_accuracy(val_outputs, y_val)
+        if args.is_target_label:
+            target_accuracy = get_accuracy(target_outputs, y_target)
+
+    # log
+    _logger.info(args.suffix)
+    _logger.info("source_accuracy: {}".format(source_accuracy))
+    _logger.info("disc accuracy: {}".format(disc_accuracy))
+    if args.is_target_label:
+        _logger.info("target_accuracy: {}".format(target_accuracy))
+    if args.is_val_label:
+        _logger.info("val accuracy: {}".format(val_accuracy))
+
+    # save params
+    if args.param_dir is not None:
+        after_target_X = R.embed.weight.detach()[:target_size, :].cpu().numpy()
+        after_source_X = R.embed.weight.detach()[target_size:, :].cpu().numpy()
+        target_outputs = target_outputs.detach().cpu().numpy()
+        save_params(args.param_dir, args.suffix, after_source_X, after_target_X, target_outputs)
 
 
-if args.param_dir is not None:
-    after_test_features = task_model.embed.weight.detach()[:test_features.shape[0], :].cpu().numpy()
-    after_train_features = task_model.embed.weight.detach()[test_features.shape[0]:, :].cpu().numpy()
-    test_outputs = test_outputs.detach().cpu().numpy()
-    save_params(args.param_dir, hparam_suffix, after_train_features, after_test_features, test_outputs)
+if __name__ == '__main__':
+    main()

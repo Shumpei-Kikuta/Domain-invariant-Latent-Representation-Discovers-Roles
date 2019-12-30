@@ -1,0 +1,12 @@
+###### Requirements without Version Specifiers ######`
+pandas
+futures
+fastdtw
+gensim
+google_compute_engine
+networkx
+matplotlib
+sklearn
+pyclustering
+python-igraph
+torch
