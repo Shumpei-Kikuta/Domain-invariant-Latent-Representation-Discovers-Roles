@@ -56,7 +56,7 @@ In order to implement domain adersarial learning, you need to prepare for the fo
 
 ```
 python src/translator.py graph/labels-large10-barbell.txt emb/10_5_double_barbell.emb \
-                         graph/10_5_double_barbell.component --target labels-small5-barbell.txt 
+                         graph/10_5_double_barbell.component --target graph/labels-small5-barbell.txt 
 ```
 
 Then, you can execute domain adversarial learning as follows:
