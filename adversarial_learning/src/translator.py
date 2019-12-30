@@ -106,7 +106,7 @@ def exec_translate(args):
         target_labels = pd.read_csv(args.target, sep=" ")
     else:
         target_labels = pd.DataFrame(columns=["label", "node"])
-    
+
     if args.validation is not None:
         val_labels = pd.read_csv(args.validation, sep=" ")
     else:
