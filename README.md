@@ -34,8 +34,39 @@ Then, you will get the embedding in `emb` directory.
 
 In order to use the embedding for domain adversarial learning, you should move the embedding to the `../adversarial_learning/emb`.
 
+## Adversarial Learning
+We use adversarial learning for make both source and target representations domain-invariant.   
 
+We need three kinds of files:
+- emb: includes both embedding from struc2vec
+- txt: includes label data of each domain data. At least, you need the labels of the source domain.
+The format should be as below:
+```
+node label
+```
+where label should be related to the role of each node.
+- component: specifies which domain a node comes from.
+The format should be as below:
+```
+node component_label
+```
+where component label should be diffrenet between domains(ex. train -> 0, val -> 1, test -> 2).
 
+In order to implement domain adersarial learning, you need to prepare for the formatting as the following command:
+
+```
+python src/translator.py graph/labels-large10-barbell.txt emb/10_5_double_barbell.emb \
+                         graph/10_5_double_barbell.component --target labels-small5-barbell.txt 
+```
+
+Then, you can execute domain adversarial learning as follows:
+
+```
+python src/train.py --is_target_label --param_dir barbell --epoch 1000 \
+                    --lambda_ 10 --r_lr 0.0001 --d_lr 0.0001 --suffix barbell
+```
+
+You can know the accuracy from the stdout log and parameters under `param_dir`.
 
 # Reference
 [1] Ribeiro, Leonardo FR, Pedro HP Saverese, and Daniel R. Figueiredo. "struc2vec: Learning node representations from structural identity." Proceedings of the 23rd ACM SIGKDD International Conference on Knowledge Discovery and Data Mining. ACM, 2017.
