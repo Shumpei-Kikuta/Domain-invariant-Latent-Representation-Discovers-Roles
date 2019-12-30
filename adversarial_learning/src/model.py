@@ -5,19 +5,19 @@ import torch.nn.functional as F
 
 
 class RoleModel(nn.Module):
-    def __init__(self, init_features, dr_rate, class_label_num):
+    def __init__(self, init_features, dr_rate, class_num):
         super().__init__()
         NODE_NUM = init_features.shape[0]
-        EMB_SIZE = init_features.shape[1]
+        emb_size = init_features.shape[1]
         
-        HIDDEN_SIZES = [EMB_SIZE, EMB_SIZE//2, EMB_SIZE//4]
+        HIDDEN_SIZES = [emb_size, emb_size//2, emb_size//4]
         
         self.embed = nn.Embedding(NODE_NUM, HIDDEN_SIZES[0])
         self.embed.weight.data.copy_(torch.from_numpy(init_features))
         self.linear1 = nn.Linear(HIDDEN_SIZES[0], HIDDEN_SIZES[1])
         self.dr_rate = dr_rate
         self.linear2 = nn.Linear(HIDDEN_SIZES[1], HIDDEN_SIZES[2])
-        self.linear3 = nn.Linear(HIDDEN_SIZES[2], class_label_num)
+        self.linear3 = nn.Linear(HIDDEN_SIZES[2], class_num)
 
     def forward(self, X):
         X= self.embed(X)
@@ -30,9 +30,9 @@ class RoleModel(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, dr_rate, EMB_SIZE):
+    def __init__(self, dr_rate, emb_size):
         super().__init__()
-        HIDDEN_SIZES = [EMB_SIZE, EMB_SIZE//2, EMB_SIZE//4]
+        HIDDEN_SIZES = [emb_size, emb_size//2, emb_size//4]
         
         self.linear1 = nn.Linear(HIDDEN_SIZES[0], HIDDEN_SIZES[1])
         self.dr_rate = dr_rate
@@ -48,14 +48,14 @@ class Discriminator(nn.Module):
 
 
 class SingleRoleModel(nn.Module):
-    def __init__(self, dr_rate, EMB_SIZE, class_label_num):
+    def __init__(self, dr_rate, emb_size, class_num):
         super().__init__()
-        HIDDEN_SIZES = [EMB_SIZE, EMB_SIZE//2, EMB_SIZE//4]
+        HIDDEN_SIZES = [emb_size, emb_size//2, emb_size//4]
         
         self.linear1 = nn.Linear(HIDDEN_SIZES[0], HIDDEN_SIZES[1])
         self.dr_rate = dr_rate
         self.linear2 = nn.Linear(HIDDEN_SIZES[1], HIDDEN_SIZES[2])
-        self.linear3 = nn.Linear(HIDDEN_SIZES[2], class_label_num)
+        self.linear3 = nn.Linear(HIDDEN_SIZES[2], class_num)
   
     def forward(self, X):
         X = F.relu(self.linear1(X))
