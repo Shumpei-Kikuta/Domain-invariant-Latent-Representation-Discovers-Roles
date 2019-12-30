@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from sklearn.manifold import TSNE
 import os
-from model import TaskModel, Discriminator
+from model import RoleModel, Discriminator
 from translator import exec_translate
 from util import *
 import argparse
@@ -81,7 +81,7 @@ X = torch.arange(train_features.shape[0] + test_features.shape[0])
 X_train = X[test_features.shape[0]:].to(device)
 X_test = X[:test_features.shape[0]].to(device)
 
-task_model = TaskModel(init_features=merge_features, dr_rate=dr_rate, class_label_num=len(y_train.unique())).to(device)
+role_model = RoleModel(init_features=merge_features, dr_rate=dr_rate, class_label_num=len(y_train.unique())).to(device)
 discriminator = Discriminator(dr_rate, EMB_SIZE=merge_features.shape[1]).to(device)
 
 # loss and optimizer
@@ -89,13 +89,13 @@ disc_criterion = nn.BCELoss()
 disc_optimizer = torch.optim.Adam(discriminator.parameters(), lr=disc_lr,  weight_decay=weight_decay)
 
 task_criterion = nn.CrossEntropyLoss() 
-task_optimizer = torch.optim.Adam(task_model.parameters(), lr=task_lr, weight_decay=weight_decay)
+task_optimizer = torch.optim.Adam(role_model.parameters(), lr=task_lr, weight_decay=weight_decay)
 
 for e in range(epoch):
     # discriminator optimization
     discriminator.train()
     
-    detached_weight = task_model.embed.weight.detach()
+    detached_weight = role_model.embed.weight.detach()
     disc_outputs = discriminator(detached_weight)
     
     disc_loss = lambda_ * disc_criterion(disc_outputs, tensor_disc_labels)
@@ -105,10 +105,10 @@ for e in range(epoch):
     disc_optimizer.step()
     
     # task optimization
-    task_model.train()
-    task_outputs = task_model(X_train)
+    role_model.train()
+    task_outputs = role_model(X_train)
 
-    move_weight = task_model.embed.weight
+    move_weight = role_model.embed.weight
     disc_outputs = discriminator(move_weight)
 
     task_loss = task_criterion(task_outputs, y_train.long()) -  lambda_ * disc_criterion(disc_outputs, tensor_disc_labels)
@@ -117,8 +117,8 @@ for e in range(epoch):
     task_loss.backward()
     task_optimizer.step()
 
-    task_model.eval()
-    test_outputs = task_model(X_test)
+    role_model.eval()
+    test_outputs = role_model(X_test)
     train_accuracy = get_accuracy(task_outputs, y_train)
     train_micro_f1, train_macro_f1 = get_f1(task_outputs, y_train)
     disc_accuracy = accuracy(disc_outputs, tensor_disc_labels)
@@ -140,7 +140,7 @@ if args.is_val_label:
 
 
 if args.param_dir is not None:
-    after_test_features = task_model.embed.weight.detach()[:test_features.shape[0], :].cpu().numpy()
-    after_train_features = task_model.embed.weight.detach()[test_features.shape[0]:, :].cpu().numpy()
+    after_test_features = role_model.embed.weight.detach()[:test_features.shape[0], :].cpu().numpy()
+    after_train_features = role_model.embed.weight.detach()[test_features.shape[0]:, :].cpu().numpy()
     test_outputs = test_outputs.detach().cpu().numpy()
     save_params(args.param_dir, hparam_suffix, after_train_features, after_test_features, test_outputs)
