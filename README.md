@@ -50,7 +50,7 @@ The format should be as below:
 ```
 node component_label
 ```
-where component label should be diffrenet between domains(ex. train -> 0, val -> 1, test -> 2).
+where component label should be diffrenet between domains(ex. train -> 0, test -> 1).
 
 In order to implement domain adersarial learning, you need to prepare for the formatting as the following command:
 
