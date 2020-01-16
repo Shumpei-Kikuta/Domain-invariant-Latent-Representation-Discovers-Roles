@@ -136,8 +136,6 @@ def exec_translate(args):
     np.save("dump/disc_data.npy", disc_data)
     if args.target is not None:
         np.save("dump/target_labels.npy", target_labels)
-    if args.validation is not None:
-        np.save("dump/val_labels.npy", val_labels)
     _logger.info("successfully saved numpy file!")
 
 
