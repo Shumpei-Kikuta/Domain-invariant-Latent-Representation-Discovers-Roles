@@ -19,9 +19,6 @@ def set_parser():
     parser.add_argument("--is_target_label", action="store_true",
                         help="True if target labels are available for calculating target accuracy")
 
-    parser.add_argument("--is_val_label", action="store_true",
-                        help="True if validation labels are available for calculating validation accuracy")
-
     parser.add_argument("--param_dir", default=None,
                         help="preserve features and predicted labels")
 
@@ -101,10 +98,6 @@ def main():
     if args.is_target_label:
         target_labels = np.load("dump/target_labels.npy")
         y_target = torch.tensor(target_labels, requires_grad=False).to(device)
-    if args.is_val_label:
-        val_labels = np.load("dump/val_labels.npy")
-        y_val = torch.tensor(val_labels, requires_grad=False).to(device)
-        val_size = val_labels.shape[0]
 
     # Read source or target label
     D_labels = np.load("dump/disc_data.npy")
@@ -138,10 +131,6 @@ def main():
         source_accuracy = get_accuracy(R_outputs, y_source)
         disc_accuracy = accuracy(D_outputs, D_labels)
 
-        if args.is_val_label:
-            val_outputs = target_outputs[:val_size]
-            target_outputs = target_outputs[val_size:]
-            val_accuracy = get_accuracy(val_outputs, y_val)
         if args.is_target_label:
             target_accuracy = get_accuracy(target_outputs, y_target)
 
@@ -151,8 +140,6 @@ def main():
     _logger.info("disc accuracy: {}".format(disc_accuracy))
     if args.is_target_label:
         _logger.info("target_accuracy: {}".format(target_accuracy))
-    if args.is_val_label:
-        _logger.info("val accuracy: {}".format(val_accuracy))
 
     # save params
     if args.param_dir is not None:
